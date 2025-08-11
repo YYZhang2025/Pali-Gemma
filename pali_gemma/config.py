@@ -23,6 +23,7 @@ class ModelConfig:
     lm_num_hidden_layers: int = 24
     lm_num_attention_heads: int = 16
     lm_num_key_value_heads: int = 16
+    lm_num_heads: int = 16
     lm_head_dim: int = 256
     lm_max_position_embeddings: int = 8192
     lm_rms_norm_eps: float = 1e-6
