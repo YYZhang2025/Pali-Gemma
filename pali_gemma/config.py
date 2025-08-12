@@ -24,13 +24,19 @@ class ModelConfig:
     lm_num_attention_heads: int = 16
     lm_num_key_value_heads: int = 16
     lm_num_heads: int = 16
-    lm_head_dim: int = 256
     lm_max_position_embeddings: int = 8192
     lm_rms_norm_eps: float = 1e-6
     lm_rope_theta: float = 10000.0
     lm_attention_bias: bool = False
     lm_attention_dropout: float = 0.0
     lm_pad_token_id: Optional[int] = None
+    
+    # Pali Gemma Config
+    ignore_index: int = -100
+    image_token_index: int = 0
+    projection_dim: int = 512
+    is_encoder_decoder: bool = False
+
 
     
     
@@ -40,3 +46,4 @@ class ModelConfig:
 
         # Ensure that the number of image tokens is a perfect square
         assert (self.vision_num_image_tokens ** 0.5).is_integer(), "Number of image tokens must be a perfect square"
+        assert self.projection_dim == self.lm_hidden_size, "Projection dimension must match LM hidden size"
