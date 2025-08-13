@@ -49,7 +49,7 @@ def hf_to_model_config(hf_cfg: Dict[str, Any]) -> ModelConfig:
         lm_rope_theta=hf_cfg.get("lm_rope_theta", defaults["lm_rope_theta"]),
         lm_attention_bias=t.get("attention_bias", defaults["lm_attention_bias"]),
         lm_attention_dropout=t.get("attention_dropout", defaults["lm_attention_dropout"]),
-        lm_pad_token_id=hf_cfg.get("pad_token_id", defaults["lm_pad_token_id"]),
+        pad_token_id=hf_cfg.get("pad_token_id", defaults["pad_token_id"]),
         # PaliGemma-specific
         ignore_index=hf_cfg.get("ignore_index", defaults["ignore_index"]),
         image_token_index=hf_cfg.get("image_token_index", defaults["image_token_index"]),
@@ -88,6 +88,5 @@ def load_hf_model(
     # Create the model using the configuration
     model = PaliGemmaForConditionalGeneration(config).to(device)
     model.load_state_dict(tensors, strict=False)
-    model.tie_weights()
 
     return (model, tokenizer)

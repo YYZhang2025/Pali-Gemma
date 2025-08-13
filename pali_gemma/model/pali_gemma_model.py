@@ -29,7 +29,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         self.multi_modal_projector = PaliGemmaMultiModalProjector(config)
 
         self.vocab_size = config.lm_vocab_size
-        self.pad_token_id = self.config.lm_pad_token_id
+        self.pad_token_id = self.config.pad_token_id
 
         self.language_model = GemmaForCausalLM(config)
 
@@ -111,9 +111,6 @@ class PaliGemmaForConditionalGeneration(nn.Module):
             )
 
         return final_embeddings, causal_mask, position_ids
-
-    def tie_weights(self):
-        return self.language_model.tie_weights()
 
     def forward(
         self,

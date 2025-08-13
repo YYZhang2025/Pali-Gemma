@@ -3,6 +3,7 @@ from transformers import PreTrainedTokenizerBase
 import numpy as np
 from PIL import Image
 from typing import List
+import torch
 
 from pali_gemma.data.image_preprocess import process_images
 from pali_gemma.utils import numpy_to_torch
@@ -77,6 +78,34 @@ class PaliGemmaProcessor:
             return_tensors="pt",
             add_special_tokens=False,
         )
+
+        # user_prompt = text[0] if text else "What is in this image?"
+        # messages = [{"role": "user", "content": user_prompt}]
+        # enc = self.tokenizer.apply_chat_template(
+        #     messages,
+        #     tokenize=True,
+        #     add_generation_prompt=True,
+        #     padding=False,
+        #     return_tensors="pt",
+        #     add_image_tokens_to_prompt=False,
+        # )
+        # input_ids = enc
+        # attention_mask = torch.ones_like(input_ids)
+        # # Prepend <image> tokens
+        # # Prepend <image> token sequence and its mask
+        # batch_size = input_ids.size(0)
+        # image_token_id = self.tokenizer.convert_tokens_to_ids(self.IMAGE_TOKEN)
+        # image_prefix = torch.full(
+        #     (batch_size, self.image_seq_length),
+        #     fill_value=image_token_id,
+        #     dtype=input_ids.dtype,
+        # )
+        # image_prefix_mask = torch.ones(
+        #     (batch_size, self.image_seq_length),
+        #     dtype=attention_mask.dtype,
+        # )
+        # input_ids = torch.cat((image_prefix, input_ids), dim=-1)
+        # attention_mask = torch.cat((image_prefix_mask, attention_mask), dim=-1)
 
         return_data = {"pixel_values": pixel_values, **inputs}
 
