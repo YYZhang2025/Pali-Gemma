@@ -1,60 +1,56 @@
-from pali_gemma.config import ModelConfig 
+from pali_gemma.config import ModelConfig
 
-import torch 
-import torch.nn as nn 
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
-
 
 
 class SiglipVisionEmbeddings(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
+
+        print("test")
         self.embed_dim = config.vision_hidden_size
         self.image_size = config.vision_image_size
-        self.patch_size = config.vision_patch_size 
-        
+        self.patch_size = config.vision_patch_size
+
         self.patch_embedding = nn.Conv2d(
             in_channels=config.vision_num_channels,
             out_channels=config.vision_hidden_size,
             kernel_size=config.vision_patch_size,
             stride=config.vision_patch_size,
-            padding='valid'
+            padding="valid",
+            bias=True,
         )
 
         assert self.image_size % self.patch_size == 0, "Image size must be divisible by patch size"
         self.num_patches = (self.image_size // self.patch_size) ** 2
-        self.num_positions = self.num_patches 
-        self.position_embeddings = nn.Embedding(self.num_positions, self.embed_dim)
+        self.num_positions = self.num_patches
+        self.position_embedding = nn.Embedding(self.num_positions, self.embed_dim)
         self.register_buffer(
-            'position_ids', 
-            torch.arange(self.num_positions, dtype=torch.int64).unsqueeze(0),
-            persistent=False
+            "position_ids", torch.arange(self.num_positions, dtype=torch.int64).unsqueeze(0), persistent=False
         )
 
     def forward(self, imgs: torch.Tensor) -> torch.Tensor:
-
         # (B, C, H, W) -> (B, C', H', W')
         patch_embeds = self.patch_embedding(imgs)
         # (B, C', H', W') -> (B, H' * W', C')
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)
 
-        position_embeds = self.position_embeddings(self.position_ids).expand(patch_embeds.size(0), -1, -1)
+        position_embeds = self.position_embedding(self.position_ids).expand(patch_embeds.size(0), -1, -1)
 
         return patch_embeds + position_embeds
-    
+
 
 class SiglipAttention(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
-        
+
         self.embed_dim = config.vision_hidden_size
         self.num_heads = config.vision_num_attention_heads
-        
+
         assert self.embed_dim % self.num_heads == 0, "Embedding dimension must be divisible by number of heads"
         self.head_dim = self.embed_dim // self.num_heads
-
 
         self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
         self.k_proj = nn.Linear(self.embed_dim, self.embed_dim)
@@ -63,17 +59,15 @@ class SiglipAttention(nn.Module):
 
         self.dropout_prob = config.vision_attention_dropout
 
-    
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        
-        B, S, D = hidden_states.shape 
 
+        B, S, D = hidden_states.shape
 
         q = self.q_proj(hidden_states).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         k = self.k_proj(hidden_states).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
         v = self.v_proj(hidden_states).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
 
-        attn_weights = (q @ k.transpose(-2, -1)) * self.head_dim ** -0.5
+        attn_weights = (q @ k.transpose(-2, -1)) * self.head_dim**-0.5
         attn_weights = attn_weights.softmax(dim=-1)
 
         if self.dropout_prob > 0:
@@ -84,7 +78,6 @@ class SiglipAttention(nn.Module):
         attn_output = self.out_proj(attn_output)
 
         return attn_output, attn_weights
-
 
 
 class SiglipMLP(nn.Module):
@@ -98,22 +91,22 @@ class SiglipMLP(nn.Module):
         hidden_states = self.fc1(hidden_states)
         hidden_states = F.gelu(hidden_states)
         hidden_states = self.fc2(hidden_states)
-        
+
         return hidden_states
-    
+
 
 class SiglipEncoderLayer(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
+
         self.self_attn = SiglipAttention(config)
         self.layer_norm1 = nn.LayerNorm(config.vision_hidden_size, eps=config.vision_layer_norm_eps)
-        
+
         self.mlp = SiglipMLP(config)
         self.layer_norm2 = nn.LayerNorm(config.vision_hidden_size, eps=config.vision_layer_norm_eps)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        
+
         residual = hidden_states
         hidden_states = self.layer_norm1(hidden_states)
         attn_output, _ = self.self_attn(hidden_states)
@@ -123,44 +116,44 @@ class SiglipEncoderLayer(nn.Module):
         hidden_states = self.layer_norm2(hidden_states)
         mlp_output = self.mlp(hidden_states)
         hidden_states = residual + mlp_output
-        
+
         return hidden_states
+
 
 class SiglipEncoder(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
-        self.layers = nn.ModuleList([
-            SiglipEncoderLayer(config) for _ in range(config.vision_num_hidden_layers)
-        ])
+
+        self.layers = nn.ModuleList([SiglipEncoderLayer(config) for _ in range(config.vision_num_hidden_layers)])
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
         for layer in self.layers:
             hidden_states = layer(hidden_states)
         return hidden_states
 
+
 class SiglipVisionTransformer(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
+
         self.embeddings = SiglipVisionEmbeddings(config)
         self.encoder = SiglipEncoder(config)
 
         self.post_layernorm = nn.LayerNorm(config.vision_hidden_size, eps=config.vision_layer_norm_eps)
-        
-        
+
     def forward(self, imgs: torch.Tensor) -> torch.Tensor:
         hidden_states = self.embeddings(imgs)
         hidden_states = self.encoder(hidden_states)
         hidden_states = self.post_layernorm(hidden_states)
         return hidden_states
 
+
 class SiglipVisionModel(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
-        
-        self.vision_transformer = SiglipVisionTransformer(config)
-        
+
+        self.vision_model = SiglipVisionTransformer(config)
+
     def forward(self, imgs: torch.Tensor) -> torch.Tensor:
-        hidden_states = self.vision_transformer(imgs)
+        hidden_states = self.vision_model(imgs)
         return hidden_states
