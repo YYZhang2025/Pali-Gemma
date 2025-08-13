@@ -1,10 +1,12 @@
 [project]
 name = "paligemma-pytorch"
 version = "0.1.0"
-requires-python = "==3.10"
+requires-python = "==3.10.*"
 
 dependencies = [
     "fire==0.6.0",
+    "gradio>=5.42.0",
+    "matplotlib>=3.10.5",
     "numpy==1.26.4",
     "pillow==10.3.0",
     "safetensors==0.4.3",
@@ -13,9 +15,9 @@ dependencies = [
     "torchaudio==2.3.0",
     "torchvision==0.18.0",
     "tqdm==4.66.4",
-    "transformers==4.41.2"
+    "transformers==4.41.2",
 ]
 
 
 [tool.setuptools.packages.find]
-include = ["pali_gemma"]
+include = ["pali_gemma*"]
