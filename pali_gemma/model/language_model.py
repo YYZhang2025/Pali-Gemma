@@ -7,20 +7,21 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Union
 
 
+# TODO: Confirm the behavior of (1.0 + self.weight) and self.weight
 class GemmaRMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
 
         self.eps = eps
-        self.weight = nn.Parameter(torch.ones(dim))
+        self.weight = nn.Parameter(torch.zeros(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         div = torch.rsqrt(torch.sum(x**2, dim=-1, keepdim=True) / x.shape[-1] + self.eps)
 
-        return x * div * self.weight
+        return x * div * (1.0 + self.weight)
 
 
 class GemmaRotaryEmbedding(nn.Module):
@@ -221,7 +222,7 @@ class GemmaModel(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
-        self.padding_idx = config.lm_pad_token_id
+        self.padding_idx = config.pad_token_id
         self.vocab_size = config.lm_vocab_size
 
         self.embed_tokens = nn.Embedding(self.vocab_size, config.lm_hidden_size, self.padding_idx)
@@ -272,16 +273,13 @@ class GemmaForCausalLM(nn.Module):
     def get_input_embeddings(self):
         return self.model.embed_tokens
 
-    def tie_weights(self):
-        self.lm_head.weight = self.model.embed_tokens.weight
-
     def forward(
         self,
         attention_mask: torch.Tensor,
         position_ids: torch.Tensor,
         inputs_embeds: torch.Tensor,
         kv_cache: KVCache,
-    ) -> dict[str, torch.Tensor]:
+    ) -> Dict[str, Union[torch.Tensor, KVCache]]:
 
         # input_embeds: [Batch_Size, Seq_Len, Hidden_Size]
         # outputs: [Batch_Size, Seq_Len, Hidden_Size]
@@ -293,8 +291,7 @@ class GemmaForCausalLM(nn.Module):
         )
 
         hidden_states = outputs
-        # logits = F.linear(hidden_states, self.model.embed_tokens.weight)
-        logits = self.lm_head(hidden_states)
+        logits = F.linear(hidden_states, self.model.embed_tokens.weight)
         logits = logits.float()
 
         return_data = {
