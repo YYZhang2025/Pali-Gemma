@@ -1,11 +1,14 @@
-from pali_gemma.model.pali_gemma_model import PaliGemmaForConditionalGeneration
-from pali_gemma.config import ModelConfig
-from transformers import AutoTokenizer
-import json
 import glob
-from safetensors import safe_open
-from typing import Tuple, Dict, Any
+import json
 import os
+from typing import Any, Dict, Tuple
+
+import torch
+from safetensors import safe_open
+from transformers import AutoTokenizer
+
+from pali_gemma.config import ModelConfig
+from pali_gemma.model.pali_gemma_model import PaliGemmaForConditionalGeneration
 
 
 def hf_to_model_config(hf_cfg: Dict[str, Any]) -> ModelConfig:
@@ -25,9 +28,7 @@ def hf_to_model_config(hf_cfg: Dict[str, Any]) -> ModelConfig:
         vision_hidden_size=v.get("hidden_size", defaults["vision_hidden_size"]),
         vision_intermediate_size=v.get("intermediate_size", defaults["vision_intermediate_size"]),
         vision_num_hidden_layers=v.get("num_hidden_layers", defaults["vision_num_hidden_layers"]),
-        vision_num_attention_heads=v.get(
-            "num_attention_heads", defaults["vision_num_attention_heads"]
-        ),
+        vision_num_attention_heads=v.get("num_attention_heads", defaults["vision_num_attention_heads"]),
         vision_num_channels=v.get("num_channels", defaults["vision_num_channels"]),
         vision_image_size=v.get("image_size", defaults["vision_image_size"]),
         vision_patch_size=v.get("patch_size", defaults["vision_patch_size"]),
@@ -42,9 +43,7 @@ def hf_to_model_config(hf_cfg: Dict[str, Any]) -> ModelConfig:
         lm_num_attention_heads=t.get("num_attention_heads", defaults["lm_num_attention_heads"]),
         lm_num_key_value_heads=t.get("num_key_value_heads", defaults["lm_num_key_value_heads"]),
         lm_num_heads=t.get("num_attention_heads", defaults["lm_num_heads"]),
-        lm_max_position_embeddings=t.get(
-            "max_position_embeddings", defaults["lm_max_position_embeddings"]
-        ),
+        lm_max_position_embeddings=t.get("max_position_embeddings", defaults["lm_max_position_embeddings"]),
         lm_rms_norm_eps=t.get("rms_norm_eps", defaults["lm_rms_norm_eps"]),
         lm_rope_theta=hf_cfg.get("lm_rope_theta", defaults["lm_rope_theta"]),
         lm_attention_bias=t.get("attention_bias", defaults["lm_attention_bias"]),
@@ -67,7 +66,7 @@ def load_model_config_from_json(path: str) -> ModelConfig:
 
 def load_hf_model(
     model_path: str = "models_weight",
-    device: str = "cpu",
+    device: torch.device = torch.device("cpu"),
 ) -> Tuple[PaliGemmaForConditionalGeneration, AutoTokenizer]:
     tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="right")
     assert tokenizer.padding_side == "right"

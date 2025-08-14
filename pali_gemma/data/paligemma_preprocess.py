@@ -1,9 +1,8 @@
-from transformers import PreTrainedTokenizerBase
+from typing import List
 
 import numpy as np
 from PIL import Image
-from typing import List
-import torch
+from transformers import AutoTokenizer
 
 from pali_gemma.data.image_preprocess import process_images
 from pali_gemma.utils import numpy_to_torch
@@ -16,7 +15,7 @@ def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_to
 class PaliGemmaProcessor:
     IMAGE_TOKEN = "<image>"
 
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, num_image_tokens: int, image_size: int):
+    def __init__(self, tokenizer: AutoTokenizer, num_image_tokens: int, image_size: int):
         self.image_seq_length = num_image_tokens
         self.image_size = image_size
 
@@ -24,9 +23,7 @@ class PaliGemmaProcessor:
 
         tokenizer.add_special_tokens(tokens_to_add)
 
-        EXTRA_TOKENS = [
-            f"<loc{i:04d}>" for i in range(1024)
-        ]  # For Object Detection (Bounding Boxes)
+        EXTRA_TOKENS = [f"<loc{i:04d}>" for i in range(1024)]  # For Object Detection (Bounding Boxes)
         EXTRA_TOKENS += [f"<seg{i:03d}>" for i in range(128)]  # For Object Segmentation
 
         tokenizer.add_tokens(EXTRA_TOKENS)
@@ -47,9 +44,7 @@ class PaliGemmaProcessor:
     ):
         # TODO: Extend to take several images
 
-        assert (
-            len(images) == 1 and len(text) == 1
-        ), f"Received {len(images)} images for {len(text)} prompts."
+        assert len(images) == 1 and len(text) == 1, f"Received {len(images)} images for {len(text)} prompts."
 
         pixel_values = process_images(
             images,
@@ -78,34 +73,6 @@ class PaliGemmaProcessor:
             return_tensors="pt",
             add_special_tokens=False,
         )
-
-        # user_prompt = text[0] if text else "What is in this image?"
-        # messages = [{"role": "user", "content": user_prompt}]
-        # enc = self.tokenizer.apply_chat_template(
-        #     messages,
-        #     tokenize=True,
-        #     add_generation_prompt=True,
-        #     padding=False,
-        #     return_tensors="pt",
-        #     add_image_tokens_to_prompt=False,
-        # )
-        # input_ids = enc
-        # attention_mask = torch.ones_like(input_ids)
-        # # Prepend <image> tokens
-        # # Prepend <image> token sequence and its mask
-        # batch_size = input_ids.size(0)
-        # image_token_id = self.tokenizer.convert_tokens_to_ids(self.IMAGE_TOKEN)
-        # image_prefix = torch.full(
-        #     (batch_size, self.image_seq_length),
-        #     fill_value=image_token_id,
-        #     dtype=input_ids.dtype,
-        # )
-        # image_prefix_mask = torch.ones(
-        #     (batch_size, self.image_seq_length),
-        #     dtype=attention_mask.dtype,
-        # )
-        # input_ids = torch.cat((image_prefix, input_ids), dim=-1)
-        # attention_mask = torch.cat((image_prefix_mask, attention_mask), dim=-1)
 
         return_data = {"pixel_values": pixel_values, **inputs}
 

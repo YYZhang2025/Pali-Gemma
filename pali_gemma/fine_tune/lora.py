@@ -2,12 +2,34 @@
 from __future__ import annotations
 
 import math
+import os
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence, Set
+from typing import Iterable, Sequence
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+@dataclass
+class LoraConfig:
+    r: int = 8
+    lora_alpha: float = 16.0
+    lora_dropout: float = 0.0
+    target_modules: Sequence[str] = field(
+        default_factory=lambda: (
+            "q_proj",
+            "k_proj",
+            "v_proj",
+            "o_proj",
+            "up_proj",
+            "down_proj",
+            "gate_proj",
+            "proj",
+            "fc",
+        )
+    )
+    exclude_modules: Sequence[str] = field(default_factory=lambda: ("lm_head", "embed_tokens"))
 
 
 # ========= LoRA Linear (single adapter) =========
@@ -69,28 +91,6 @@ class LoraLinear(nn.Linear):
         self._merged = False
 
 
-# ========= Simple PEFT-like interface =========
-@dataclass
-class LoraConfig:
-    r: int = 8
-    lora_alpha: float = 16.0
-    lora_dropout: float = 0.0
-    target_modules: Sequence[str] = field(
-        default_factory=lambda: (
-            "q_proj",
-            "k_proj",
-            "v_proj",
-            "o_proj",
-            "up_proj",
-            "down_proj",
-            "gate_proj",
-            "proj",
-            "fc",
-        )
-    )
-    exclude_modules: Sequence[str] = field(default_factory=lambda: ("lm_head", "embed_tokens"))
-
-
 class LoraModel(nn.Module):
     """
     Thin wrapper to hold base model and provide helpers.
@@ -99,7 +99,8 @@ class LoraModel(nn.Module):
     def __init__(self, base: nn.Module, cfg: LoraConfig):
         super().__init__()
         self.base = base
-        self.cfg = cfg
+        self.config = base.config  # Model Configuration
+        self.cfg = cfg  # Lora Configuration
 
     def forward(self, *args, **kw):
         return self.base(*args, **kw)
@@ -151,6 +152,9 @@ class LoraModel(nn.Module):
 
     @torch.no_grad()
     def load_adapter(self, path: str, strict_shape: bool = True):
+        if os.path.isdir(path):
+            path = os.path.join(path, "adapter.pt")
+
         obj = torch.load(path, map_location="cpu")
         state = obj["state"]
         named = dict(self.base.named_modules())
@@ -184,7 +188,7 @@ def _should_wrap_linear(name: str, cfg: LoraConfig) -> bool:
     return any(t in name for t in cfg.target_modules)
 
 
-def get_lora_model(model: nn.Module, cfg: LoraConfig) -> LoraModel:
+def get_lora_model(model: nn.Module, cfg: LoraConfig, device: torch.device) -> LoraModel:
     # replace targeted Linear layers in-place
     for parent_name, parent in list(model.named_modules()):
         for child_name, child in list(parent.named_children()):
@@ -206,4 +210,7 @@ def get_lora_model(model: nn.Module, cfg: LoraConfig) -> LoraModel:
 
     wrapped = LoraModel(model, cfg)
     wrapped.mark_only_lora_as_trainable()
+
+    wrapped.to(device)
+    wrapped.train()
     return wrapped

@@ -4,13 +4,13 @@ MODEL_PATH="./models_weight"
 PROMPT="Question: What the image about?"
 IMAGE_FILE_PATH="./cat.png"
 ANSWER="It is a cute cat doing the programming"
-LORA_R=8
+LORA_R=4
 LORA_ALPHA=16
 LORA_DROPOUT=0.1
 LR=1e-4
-EPOCHS=10
-STEPS=1000
-SAVE_ADAPTER_PATH="./lora_adapter"
+EPOCHS=1
+STEPS=200
+SAVE_ADAPTER_PATH="./naive_lora"
 ONLY_CPU="False"
 
 python pali_gemma_ft.py \
