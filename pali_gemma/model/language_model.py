@@ -1,13 +1,10 @@
-from pali_gemma.config import ModelConfig
-from pali_gemma.model.kv_cache import KVCache, repeat_kv
-from pali_gemma.utils import unsqueeze_tensor
+from typing import Dict, Optional, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-
-from typing import Optional, Tuple, Dict, Union
+from pali_gemma.config import ModelConfig
+from pali_gemma.model.kv_cache import KVCache, repeat_kv
 
 
 # TODO: Confirm the behavior of (1.0 + self.weight) and self.weight
@@ -19,13 +16,17 @@ class GemmaRMSNorm(nn.Module):
         self.weight = nn.Parameter(torch.zeros(dim))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        div = torch.rsqrt(torch.sum(x**2, dim=-1, keepdim=True) / x.shape[-1] + self.eps)
+        div = torch.rsqrt(
+            torch.sum(x**2, dim=-1, keepdim=True) / x.shape[-1] + self.eps
+        )
 
         return x * div * (1.0 + self.weight)
 
 
 class GemmaRotaryEmbedding(nn.Module):
-    def __init__(self, dim: int, max_position_embedding: int = 2048, base: float = 10_000):
+    def __init__(
+        self, dim: int, max_position_embedding: int = 2048, base: float = 10_000
+    ):
         super().__init__()
 
         self.dim = dim
@@ -33,7 +34,9 @@ class GemmaRotaryEmbedding(nn.Module):
         self.base = base
 
         # Calculate the theta
-        inv_freq = 1.0 / (self.base ** (torch.arange(0, self.dim, 2).float() / self.dim))
+        inv_freq = 1.0 / (
+            self.base ** (torch.arange(0, self.dim, 2).float() / self.dim)
+        )
         self.register_buffer("inv_freq", inv_freq, persistent=False)
 
     def forward(self, x, position_ids):
@@ -48,10 +51,14 @@ class GemmaRotaryEmbedding(nn.Module):
         position_ids_expanded = position_ids[:, None, :].float()
 
         device_type = (
-            device_type if isinstance(device_type, str) and device_type != "mps" else "cpu"
+            device_type
+            if isinstance(device_type, str) and device_type != "mps"
+            else "cpu"
         )
         with torch.autocast(device_type=device_type, enabled=False):
-            freqs = (inv_freq_expanded.float() @ position_ids_expanded.float()).transpose(1, 2)
+            freqs = (
+                inv_freq_expanded.float() @ position_ids_expanded.float()
+            ).transpose(1, 2)
             # emb: [Batch_Size, Seq_Len, Head_Dim]
             emb = torch.cat((freqs, freqs), dim=-1)
             # cos, sin: [Batch_Size, Seq_Len, Head_Dim]
@@ -118,7 +125,6 @@ class GemmaAttention(nn.Module):
         kv_cache: Optional[KVCache] = None,
         **kwargs,
     ):
-
         B, S, D = hidden_states.shape
         d_k = D // self.config.lm_num_heads
 
@@ -140,7 +146,9 @@ class GemmaAttention(nn.Module):
             .transpose(1, 2)
         )
 
-        cos, sin = self.rotary_emb(v, position_ids)  # HIGHLIGHT: Get cos and sin using value state.
+        cos, sin = self.rotary_emb(
+            v, position_ids
+        )  # HIGHLIGHT: Get cos and sin using value state.
         q, k = apply_rotary_embedding(q, k, cos, sin)
 
         if kv_cache is not None:
@@ -155,7 +163,9 @@ class GemmaAttention(nn.Module):
         attn = attn + attention_mask
 
         attn = attn.softmax(dim=-1)
-        attn = F.dropout(attn, p=self.config.lm_attention_dropout, training=self.training)
+        attn = F.dropout(
+            attn, p=self.config.lm_attention_dropout, training=self.training
+        )
 
         out = torch.matmul(attn, v)
         out = out.transpose(1, 2).contiguous().view(B, S, D)
@@ -175,7 +185,6 @@ class GemmaMLP(nn.Module):
         self.down_proj = nn.Linear(self.intermediate_size, self.hidden_size, bias=False)
 
     def forward(self, x):
-
         return self.down_proj(
             nn.functional.gelu(self.gate_proj(x), approximate="tanh") * self.up_proj(x)
         )
@@ -188,7 +197,9 @@ class GemmaDecoderLayer(nn.Module):
         self.layer_idx = layer_idx
 
         self.self_attn = GemmaAttention(config, layer_idx)
-        self.input_layernorm = GemmaRMSNorm(config.lm_hidden_size, eps=config.lm_rms_norm_eps)
+        self.input_layernorm = GemmaRMSNorm(
+            config.lm_hidden_size, eps=config.lm_rms_norm_eps
+        )
 
         self.mlp = GemmaMLP(config)
         self.post_attention_layernorm = GemmaRMSNorm(
@@ -225,7 +236,9 @@ class GemmaModel(nn.Module):
         self.padding_idx = config.pad_token_id
         self.vocab_size = config.lm_vocab_size
 
-        self.embed_tokens = nn.Embedding(self.vocab_size, config.lm_hidden_size, self.padding_idx)
+        self.embed_tokens = nn.Embedding(
+            self.vocab_size, config.lm_hidden_size, self.padding_idx
+        )
 
         self.layers = nn.ModuleList(
             [
@@ -261,14 +274,15 @@ class GemmaModel(nn.Module):
 
 
 class GemmaForCausalLM(nn.Module):
-
     def __init__(self, config: ModelConfig):
         super().__init__()
 
         self.config = config
         self.model = GemmaModel(config)
         self.vocab_size = config.lm_vocab_size
-        self.lm_head = nn.Linear(config.lm_hidden_size, config.lm_vocab_size, bias=False)
+        self.lm_head = nn.Linear(
+            config.lm_hidden_size, config.lm_vocab_size, bias=False
+        )
 
     def get_input_embeddings(self):
         return self.model.embed_tokens
@@ -280,7 +294,6 @@ class GemmaForCausalLM(nn.Module):
         inputs_embeds: torch.Tensor,
         kv_cache: KVCache,
     ) -> Dict[str, Union[torch.Tensor, KVCache]]:
-
         # input_embeds: [Batch_Size, Seq_Len, Hidden_Size]
         # outputs: [Batch_Size, Seq_Len, Hidden_Size]
         outputs = self.model(

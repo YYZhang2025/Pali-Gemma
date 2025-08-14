@@ -1,0 +1,9 @@
+pyproject.toml
+pali_gemma/config.py
+pali_gemma/model/vision_model.py
+paligemma_pytorch.egg-info/PKG-INFO
+paligemma_pytorch.egg-info/SOURCES.txt
+paligemma_pytorch.egg-info/dependency_links.txt
+paligemma_pytorch.egg-info/requires.txt
+paligemma_pytorch.egg-info/top_level.txt
+test/test_vision_model.py
