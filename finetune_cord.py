@@ -103,9 +103,7 @@ def token2json(tokens, processor, is_inner_value=False, added_vocab=None):
 # =====================
 # Label building (mask image/pad tokens)
 # =====================
-def build_labels(
-    input_ids: torch.Tensor, attention_mask: torch.Tensor, pad_token_id: int, image_token_id: Optional[int]
-) -> torch.Tensor:
+def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Optional[int]) -> torch.Tensor:
     """
     Prepare next-token prediction labels from `input_ids` by masking out
     padding and image-token positions with -100.
@@ -114,12 +112,33 @@ def build_labels(
     """
     labels = input_ids.clone()
     # mask pads
-    labels[attention_mask == 0] = -100
+    labels[labels == pad_token_id] = -100
     # mask image tokens if we can identify them
     if image_token_id is not None and image_token_id >= 0:
         labels[labels == image_token_id] = -100
 
     return labels
+
+
+# =====================
+# DataLoader helpers (CORD)
+# =====================
+def collate_fn(
+    batch,
+    prompt_text: str,
+    processor: PaliGemmaProcessor,
+):
+    images = [b[0] for b in batch]
+    # teacher-forcing: concatenate prompt and target JSON
+    prefix_prompt = [prompt_text for _ in batch]
+    suffix_prompt = [tgt + "<eos>" for (_, tgt) in batch]
+    inputs = processor(prefix_prompt=prefix_prompt, images=images, suffix_prompt=suffix_prompt)
+
+    return {
+        "input_ids": inputs["input_ids"],
+        "attention_mask": inputs["attention_mask"],
+        "pixel_values": inputs["pixel_values"],
+    }
 
 
 # =====================
@@ -169,7 +188,7 @@ def train_step(
     attention_mask = batch["attention_mask"]  # [B, S]
     pixel_values = batch["pixel_values"]  # [B, C, H, W]
 
-    labels = build_labels(input_ids, attention_mask, pad_token_id, image_token_id)
+    labels = build_labels(input_ids, pad_token_id, image_token_id)
 
     # Forward
     outputs = model(
@@ -189,30 +208,8 @@ def train_step(
         shift_labels.view(-1),
         ignore_index=-100,
     )
+
     return loss
-
-
-# =====================
-# DataLoader helpers (CORD)
-# =====================
-def collate_fn(
-    batch,
-    prompt_text: str,
-    processor: PaliGemmaProcessor,
-):
-    images = [b[0] for b in batch]
-    # teacher-forcing: concatenate prompt and target JSON
-    texts = [prompt_text + tgt for (_, tgt) in batch]
-    inputs = processor(
-        text=texts,
-        images=images,
-    )
-
-    return {
-        "input_ids": inputs["input_ids"],
-        "attention_mask": inputs["attention_mask"],
-        "pixel_values": inputs["pixel_values"],
-    }
 
 
 # =====================
@@ -254,6 +251,8 @@ def main(
     num_image_tokens = base_model.config.vision_num_image_tokens
     image_size = base_model.config.vision_image_size
     processor = PaliGemmaProcessor(tokenizer, num_image_tokens, image_size)
+    image_token_id = processor.image_token_ids
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
     # 3) Wrap with LoRA (PEFT-like)
     cfg = LoraConfig(
@@ -264,8 +263,6 @@ def main(
         exclude_modules=("lm_head", "embed_tokens"),
     )
     lora_model = get_lora_model(base_model, cfg, device)
-
-    # Inserted code: count parameters and log to TensorBoard
     total_params = sum(p.numel() for p in lora_model.parameters())
     trainable_params = sum(p.numel() for p in lora_model.parameters() if p.requires_grad)
     trainable_percent = 100 * trainable_params / total_params
@@ -279,9 +276,6 @@ def main(
         # fallback: parameters that contain lora_A/B
         params = (p for n, p in lora_model.named_parameters() if ("lora_A" in n or "lora_B" in n))
     optimizer = torch.optim.AdamW(params, lr=lr)
-
-    image_token_id = processor.image_token_ids
-    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
     # 6) Build datasets & dataloaders (CORD image->JSON)
     print_color("Loading CORD dataset...", "yellow")
@@ -311,24 +305,29 @@ def main(
     global_step = 0
     for epoch in range(epochs):
         lora_model.train()
-        running = 0.0
+
+        batch_loss = 0.0
         pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{epochs}")
         for step, batch in enumerate(pbar, start=1):
             batch = move_inputs_to_device(batch, device)
-            loss = train_step(lora_model, batch, pad_token_id, image_token_id)
-            loss = loss / grad_accum
 
+            with torch.autocast(
+                device_type=device.type, dtype=torch.bfloat16 if device.type == "cuda" else torch.float16
+            ):
+                loss = train_step(lora_model, batch, pad_token_id, image_token_id)
+
+            loss = loss / grad_accum
             loss.backward()
 
+            batch_loss += loss.item()
             if step % grad_accum == 0:
                 optimizer.step()
-                optimizer.zero_grad(set_to_none=True)
+                optimizer.zero_grad()
                 global_step += 1
 
-            running += loss.item()
-            avg = running / step
-            pbar.set_postfix(loss=loss.item(), avg=avg)
-            writer.add_scalar("train/loss", loss.item(), global_step)
+                pbar.set_postfix(loss=batch_loss)
+                writer.add_scalar("train/loss", batch_loss, global_step)
+                batch_loss = 0.0
 
         # Optional validation (loss-only)
         lora_model.eval()

@@ -63,7 +63,7 @@ def inference(
     generated_tokens = torch.cat(generated_tokens, dim=-1)
 
     # Decode the generated tokens
-    decoded = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+    decoded = processor.tokenizer.decode(generated_tokens, skip_special_tokens=False)
 
     # print(prompt)
     print_color(prompt)

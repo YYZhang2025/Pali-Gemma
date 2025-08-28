@@ -9,8 +9,8 @@ from pali_gemma.data_process.image_preprocess import process_images
 from pali_gemma.utils import move_inputs_to_device, numpy_to_torch
 
 
-def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_token):
-    return f"{image_token * image_seq_len}{bos_token}{prefix_prompt}\n"
+def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_token, suffix: str = ""):
+    return f"{image_token * image_seq_len}{bos_token}{prefix_prompt}\n{suffix}"
 
 
 class PaliGemmaProcessor:
@@ -34,8 +34,9 @@ class PaliGemmaProcessor:
 
     def __call__(
         self,
-        text: List[str],
+        prefix_prompt: List[str],
         images: List[Image.Image],
+        suffix_prompt: List[str] | None = None,
         padding: str = "longest",
         truncation: bool = False,
     ):
@@ -50,15 +51,27 @@ class PaliGemmaProcessor:
         pixel_values = np.stack(pixel_values, axis=0)  # (B, 3, H, W)
         pixel_values = numpy_to_torch(pixel_values)
 
-        input_strings = [
-            add_image_tokens_to_prompt(
-                prefix_prompt=prompt,
-                bos_token=self.tokenizer.bos_token,
-                image_seq_len=self.image_seq_length,
-                image_token=self.IMAGE_TOKEN,
-            )
-            for prompt in text
-        ]
+        if suffix_prompt is not None:
+            input_strings = [
+                add_image_tokens_to_prompt(
+                    prefix_prompt=prefix,
+                    bos_token=self.tokenizer.bos_token,
+                    image_seq_len=self.image_seq_length,
+                    image_token=self.IMAGE_TOKEN,
+                    suffix=suffix,
+                )
+                for prefix, suffix in zip(prefix_prompt, suffix_prompt)
+            ]
+        else:
+            input_strings = [
+                add_image_tokens_to_prompt(
+                    prefix_prompt=prefix,
+                    bos_token=self.tokenizer.bos_token,
+                    image_seq_len=self.image_seq_length,
+                    image_token=self.IMAGE_TOKEN,
+                )
+                for prefix in prefix_prompt
+            ]
 
         inputs = self.tokenizer(
             input_strings,
@@ -75,12 +88,12 @@ class PaliGemmaProcessor:
         }
 
 
-def get_model_inputs(processor, prompt: str, image_file_path: str, device: torch.device):
+def get_model_inputs(processor: PaliGemmaProcessor, prompt: str, image_file_path: str, device: torch.device):
     image = Image.open(image_file_path)
     image = image.convert("RGB")  # Ensure the image is in RGB format
     images = [image]
     prompts = [prompt]
-    model_inputs = processor(text=prompts, images=images)
+    model_inputs = processor(prefix_prompt=prompts, images=images)
     model_inputs = move_inputs_to_device(model_inputs, device)
 
     return model_inputs
