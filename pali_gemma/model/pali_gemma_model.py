@@ -40,12 +40,24 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         attention_mask: torch.Tensor,
         kv_cache: Optional[KVCache] = None,
     ):
+        """Merge image features with text inputs.
+
+        Args:
+            image_features (torch.Tensor): (B, num_image_tokens, D) The image features to merge.
+            inputs_embeds (torch.Tensor): (B, S, D) The text inputs embeddings.
+            input_ids (torch.Tensor): (B, S) The input IDs.
+            attention_mask (torch.Tensor): (B, S) The attention mask.
+            kv_cache (Optional[KVCache], optional): The key-value cache. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
+        # (B, D)
+        scaled_image_features = image_features / (self.config.projection_dim**0.5)
+
         _, _, embed_dim = image_features.shape
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
-
-        # (B, D)
-        scaled_image_features = image_features / (self.config.projection_dim**0.5)
 
         # Combine the embeddings of the
         # - image tokens
@@ -75,20 +87,27 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         # Create mask for the attention
         q_len = inputs_embeds.shape[1]
 
+        # q_len := inputs_embeds.shape[1], K := q_len if no cache else kv_cache.num_items() + q_len
         if kv_cache is None or kv_cache.num_items() == 0:
-            # Do not mask any token, because we're in the prefill phase
-            # This only works when we have no padding
-            causal_mask = torch.full((batch_size, q_len, q_len), fill_value=0, dtype=dtype, device=device)
+            # Prefill: causal lower-triangular AND block pad keys
+            # causal_lower: [Q, Q] True on and below diagonal
+            causal_lower = torch.tril(torch.ones(q_len, q_len, device=device, dtype=torch.bool))
+
+            # key padding mask: [B, K] True for real tokens (not pad)
+            key_keep = attention_mask.to(torch.bool)  # [B, Q] here (K == Q)
+
+            # allow[i, q, k] = causal_lower[q, k] & key_keep[i, k]
+            allow = causal_lower.unsqueeze(0) & key_keep.unsqueeze(1)  # [B, Q, Q]
+            causal_mask = allow   # [B, Q, Q]
         else:
-            # Since we are generating tokens, the query must be one single token
+            # Decode: single query can attend to all cached keys + itself (no future exists)
             assert q_len == 1
             kv_len = kv_cache.num_items() + q_len
-            # Also in this case we don't need to mask anything, since each query should be able to attend all previous tokens.
-            # This only works when we have no padding
-            causal_mask = torch.full((batch_size, q_len, kv_len), fill_value=0, dtype=dtype, device=device)
 
-        # Add the head dimension
-        # [Batch_Size, Q_Len, KV_Len] -> [Batch_Size, Num_Heads_Q, Q_Len, KV_Len]
+            # If your cache never stores pads, you can allow all keys:
+            causal_mask = torch.zeros((batch_size, q_len, kv_len), dtype=dtype, device=device)
+
+        # Add head dim: [B, 1, Q, K]
         causal_mask = causal_mask.unsqueeze(1)
 
         if kv_cache is not None and kv_cache.num_items() > 0:
