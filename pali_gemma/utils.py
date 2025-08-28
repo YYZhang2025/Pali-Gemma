@@ -27,7 +27,6 @@ def get_device(only_cpu: bool = False) -> torch.device:
 def unsqueeze_tensor(tensor: torch.Tensor, size: int, dim: int) -> torch.Tensor:
     while tensor.dim() < size:
         tensor = tensor.unsqueeze(dim)
-
     return tensor
 
 

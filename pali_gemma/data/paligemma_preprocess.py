@@ -2,7 +2,7 @@ from typing import List
 
 import numpy as np
 from PIL import Image
-from transformers import AutoTokenizer
+from transformers import PreTrainedTokenizerBase
 
 from pali_gemma.data.image_preprocess import process_images
 from pali_gemma.utils import numpy_to_torch
@@ -15,13 +15,15 @@ def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_to
 class PaliGemmaProcessor:
     IMAGE_TOKEN = "<image>"
 
-    def __init__(self, tokenizer: AutoTokenizer, num_image_tokens: int, image_size: int):
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, num_image_tokens: int, image_size: int):
         self.image_seq_length = num_image_tokens
         self.image_size = image_size
 
         tokens_to_add = {"additional_special_tokens": [self.IMAGE_TOKEN]}
 
-        tokenizer.add_special_tokens(tokens_to_add)
+        # tokenizer.add_special_tokens(tokens_to_add)
+        # Add the image token as a special token without tripping strict type checkers
+        tokenizer.add_tokens([self.IMAGE_TOKEN], special_tokens=True)
 
         EXTRA_TOKENS = [f"<loc{i:04d}>" for i in range(1024)]  # For Object Detection (Bounding Boxes)
         EXTRA_TOKENS += [f"<seg{i:03d}>" for i in range(128)]  # For Object Segmentation
@@ -43,8 +45,7 @@ class PaliGemmaProcessor:
         truncation: bool = True,
     ):
         # TODO: Extend to take several images
-
-        assert len(images) == 1 and len(text) == 1, f"Received {len(images)} images for {len(text)} prompts."
+        # assert len(images) == 1 and len(text) == 1, f"Received {len(images)} images for {len(text)} prompts."
 
         pixel_values = process_images(
             images,
@@ -54,7 +55,7 @@ class PaliGemmaProcessor:
         )
 
         # Stack images
-        pixel_values = np.stack(pixel_values, axis=0)
+        pixel_values = np.stack(pixel_values, axis=0)  # (B, 3, H, W)
         pixel_values = numpy_to_torch(pixel_values)
 
         input_strings = [

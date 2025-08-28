@@ -1,49 +1,25 @@
-from PIL import Image
-import torch
+import os
+
 import fire
+import torch
+import torch.nn as nn
 
 from pali_gemma.data.paligemma_preprocess import PaliGemmaProcessor
-from pali_gemma.model.pali_gemma_model import PaliGemmaForConditionalGeneration
-from pali_gemma.model.kv_cache import KVCache
+from pali_gemma.data.utils import get_model_inputs
+from pali_gemma.fine_tune.lora import LoraConfig, get_lora_model
+from pali_gemma.inference.sampling import get_sampler
 from pali_gemma.load_weight import load_hf_model
+from pali_gemma.model.kv_cache import KVCache
+from pali_gemma.utils import get_device, load_lora_config_from_file_or_args
 
-
-def move_inputs_to_device(model_inputs: dict, device: str):
-    model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
-    return model_inputs
-
-
-def get_model_inputs(processor: PaliGemmaProcessor, prompt: str, image_file_path: str, device: str):
-    image = Image.open(image_file_path)
-    image = image.convert("RGB")  # Ensure the image is in RGB format
-    images = [image]
-    prompts = [prompt]
-    model_inputs = processor(text=prompts, images=images)
-    model_inputs = move_inputs_to_device(model_inputs, device)
-
-    return model_inputs
-
-
-def _sample_top_p(probs: torch.Tensor, p: float):
-    probs_sort, probs_indices = torch.sort(probs, dim=-1, descending=True)
-
-    probs_sum = torch.cumsum(probs_sort, dim=-1)
-
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))  # Normalize
-
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = probs_indices.gather(-1, next_token)
-
-    return next_token
+# CONST VARIABLE
+LORA_BASE_DIR = "./lora_adapters"
 
 
 def test_inference(
-    model: PaliGemmaForConditionalGeneration,
+    model: nn.Module,
     processor: PaliGemmaProcessor,
-    device: str,
+    device: torch.device,
     prompt: str,
     image_file_path: str,
     max_tokens_to_generate: int,
@@ -75,12 +51,8 @@ def test_inference(
         next_token_logits = outputs["logits"][:, -1, :]
 
         # Sample the next token
-        if do_sample:
-            # Apply temperature
-            next_token_logits = torch.softmax(next_token_logits / temperature, dim=-1)
-            next_token = _sample_top_p(next_token_logits, top_p)
-        else:
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+        sampler = get_sampler("top_p" if do_sample else "naive")
+        next_token = sampler(next_token_logits, temperature=temperature, p=top_p)
         assert next_token.size() == (1, 1)
         next_token = next_token.squeeze(0)  # Remove batch dimension
         generated_tokens.append(next_token)
@@ -89,9 +61,7 @@ def test_inference(
             break
         # Append the next token to the input
         input_ids = next_token.unsqueeze(0)
-        attention_mask = torch.cat(
-            [attention_mask, torch.ones((1, 1), device=input_ids.device)], dim=-1
-        )
+        attention_mask = torch.cat([attention_mask, torch.ones((1, 1), device=input_ids.device)], dim=-1)
 
     generated_tokens = torch.cat(generated_tokens, dim=-1)
     # Decode the generated tokens
@@ -109,20 +79,33 @@ def main(
     top_p: float = 0.9,
     do_sample: bool = True,
     only_cpu: bool = False,
+    lora_adapter_name: str | None = None,
+    lora_merge: bool = False,
 ):
-    device = "cpu"
+    device = get_device(only_cpu)
 
-    if not only_cpu:
-        if torch.cuda.is_available():
-            device = "cuda"
-        elif torch.backends.mps.is_available():
-            device = "mps"
-
-    print("Device in use: ", device)
-
-    print(f"Loading model")
+    print("Loading model from:", model_path)
     model, tokenizer = load_hf_model(model_path, device)
-    model = model.to(device).eval()
+
+    # Optionally load LoRA adapter
+    if lora_adapter_name:
+        lora_adapter_path = os.path.join(LORA_BASE_DIR, lora_adapter_name)
+
+        if not os.path.isdir(lora_adapter_path):
+            raise FileNotFoundError(f"LoRA adapter not found: {lora_adapter_path}")
+
+        # Wrap base model with LoRA layers (must match training target modules)
+        lora_cfg = load_lora_config_from_file_or_args(lora_adapter_path)
+        model = get_lora_model(model, lora_cfg, device)
+        model.load_adapter(
+            lora_adapter_path,
+        )
+        if lora_merge:
+            model.merge_adapter()
+        print(f"Loaded LoRA adapter from: {lora_adapter_path}. Merged: {lora_merge}")
+
+    model = model.eval()
+    model = model.to(device)
 
     num_image_tokens = model.config.vision_num_image_tokens
     image_size = model.config.vision_image_size

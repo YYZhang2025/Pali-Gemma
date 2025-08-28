@@ -16,9 +16,10 @@ dependencies = [
     "torchvision==0.18.0",
     "tqdm==4.66.4",
     "transformers==4.41.2",
-    "huggingface_hub>=0.24.0", 
-    "tensorboard>=2.20.0",  
-    "gradio>=5.42.0"
+    "huggingface_hub>=0.24.0",
+    "tensorboard>=2.20.0",
+    "gradio>=5.42.0",
+    "datasets>=4.0.0",
 ]
 
 

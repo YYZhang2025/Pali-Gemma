@@ -1,8 +1,8 @@
-from pali_gemma.config import ModelConfig
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+from pali_gemma.config import ModelConfig
 
 
 class SiglipVisionEmbeddings(nn.Module):
@@ -49,9 +49,9 @@ class SiglipAttention(nn.Module):
         self.embed_dim = config.vision_hidden_size
         self.num_heads = config.vision_num_attention_heads
 
-        assert (
-            self.embed_dim % self.num_heads == 0
-        ), "Embedding dimension must be divisible by number of heads"
+        assert self.embed_dim % self.num_heads == 0, (
+            "Embedding dimension must be divisible by number of heads"
+        )
         self.head_dim = self.embed_dim // self.num_heads
 
         self.q_proj = nn.Linear(self.embed_dim, self.embed_dim)
@@ -62,7 +62,6 @@ class SiglipAttention(nn.Module):
         self.dropout_prob = config.vision_attention_dropout
 
     def forward(self, hidden_states: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-
         B, S, D = hidden_states.shape
 
         q = self.q_proj(hidden_states).view(B, S, self.num_heads, self.head_dim).transpose(1, 2)
@@ -73,9 +72,7 @@ class SiglipAttention(nn.Module):
         attn_weights = attn_weights.softmax(dim=-1)
 
         if self.dropout_prob > 0:
-            attn_weights = nn.functional.dropout(
-                attn_weights, p=self.dropout_prob, training=self.training
-            )
+            attn_weights = nn.functional.dropout(attn_weights, p=self.dropout_prob, training=self.training)
 
         attn_output = (attn_weights @ v).transpose(1, 2).contiguous().view(B, S, D)
 
@@ -110,7 +107,6 @@ class SiglipEncoderLayer(nn.Module):
         self.layer_norm2 = nn.LayerNorm(config.vision_hidden_size, eps=config.vision_layer_norm_eps)
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
-
         residual = hidden_states
         hidden_states = self.layer_norm1(hidden_states)
         attn_output, _ = self.self_attn(hidden_states)
@@ -147,9 +143,7 @@ class SiglipVisionTransformer(nn.Module):
         self.embeddings = SiglipVisionEmbeddings(config)
         self.encoder = SiglipEncoder(config)
 
-        self.post_layernorm = nn.LayerNorm(
-            config.vision_hidden_size, eps=config.vision_layer_norm_eps
-        )
+        self.post_layernorm = nn.LayerNorm(config.vision_hidden_size, eps=config.vision_layer_norm_eps)
 
     def forward(self, imgs: torch.Tensor) -> torch.Tensor:
         hidden_states = self.embeddings(imgs)

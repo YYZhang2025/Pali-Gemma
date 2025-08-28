@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 import fire
@@ -8,35 +9,18 @@ import torch.nn as nn
 import torch.nn.functional as F
 from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from pali_gemma.data.paligemma_preprocess import PaliGemmaProcessor
+from pali_gemma.data.utils import move_inputs_to_device
 from pali_gemma.fine_tune.lora import LoraConfig, get_lora_model
 from pali_gemma.load_weight import load_hf_model
-
-# =====================
-# Utilities
-# =====================
-
-
-def select_device(only_cpu: bool = False) -> str:
-    if only_cpu:
-        return "cpu"
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
-
-
-def move_to_device(batch: dict, device: str) -> dict:
-    return {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in batch.items()}
+from pali_gemma.utils import get_device
 
 
 # =====================
 # Label building (mask image/pad tokens)
 # =====================
-
-
 def build_labels(
     input_ids: torch.Tensor, attention_mask: torch.Tensor, pad_token_id: int, image_token_id: Optional[int]
 ) -> torch.Tensor:
@@ -61,12 +45,12 @@ def build_labels(
 
 
 def build_single_sample(
-    processor: PaliGemmaProcessor, prompt: str, answer: str, image_path: str, device: str
+    processor: PaliGemmaProcessor, prompt: str, answer: str, image_path: str, device: torch.device
 ) -> dict:
     image = Image.open(image_path).convert("RGB")
     model_inputs = processor(text=[prompt + answer], images=[image])
     # Using concatenated prompt+answer as targets; you can switch to special formatting if needed.
-    return move_to_device(model_inputs, device)
+    return move_inputs_to_device(model_inputs, device)
 
 
 # =====================
@@ -107,8 +91,6 @@ def train_step(
 # =====================
 # Main: LoRA fine-tune on one (prompt,image,answer)
 # =====================
-
-
 def main(
     model_path: str,
     prompt: str,
@@ -125,14 +107,15 @@ def main(
     grad_accum: int = 1,
     only_cpu: bool = False,
     save_adapter_path: str = "pali_lora_adapter.pt",
+    adapters_dir: str = "./lora_adapters",
 ):
-    device = select_device(only_cpu)
-    print(f"Device: {device}")
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    device = get_device(only_cpu)
+    writer = SummaryWriter()
 
     # 1) Load base model & tokenizer
     print("Loading model...")
     base_model, tokenizer = load_hf_model(model_path, device)
-    base_model = base_model.to(device).train()
 
     # 2) Build processor (image tokenizer helper)
     num_image_tokens = base_model.config.vision_num_image_tokens
@@ -147,16 +130,14 @@ def main(
         target_modules=("q_proj", "k_proj", "v_proj", "o_proj", "up_proj", "down_proj", "gate_proj", "proj"),
         exclude_modules=("lm_head", "embed_tokens"),
     )
-    lora_model = get_lora_model(base_model, cfg)
+    lora_model = get_lora_model(base_model, cfg, device)
 
     # Inserted code: count parameters and log to TensorBoard
     total_params = sum(p.numel() for p in lora_model.parameters())
     trainable_params = sum(p.numel() for p in lora_model.parameters() if p.requires_grad)
-    print(f"Total parameters: {total_params}")
-    print(f"Trainable parameters: {trainable_params}")
-    writer = SummaryWriter()
-    writer.add_scalar("params/total", total_params)
-    writer.add_scalar("params/trainable", trainable_params)
+    trainable_percent = 100 * trainable_params / total_params
+    print(f"Total parameters:     {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,} ({trainable_percent:.2f}%)")
 
     # 4) Optimizer (only LoRA params)
     if hasattr(lora_model, "lora_parameters"):
@@ -169,7 +150,7 @@ def main(
     # 5) Try get image token id for masking
     image_token_id = None
     try:
-        image_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
+        image_token_id = tokenizer.convert_tokens_to_ids(processor.IMAGE_TOKEN)
         if image_token_id is None:
             image_token_id = -1
     except Exception:
@@ -188,7 +169,7 @@ def main(
     global_step = 0
     for epoch in range(epochs):
         running = 0.0
-        for step in range(steps):
+        for step in tqdm(range(steps), desc=f"Epoch {epoch + 1}/{epochs}"):
             loss = train_step(lora_model, batch, pad_token_id, image_token_id)
             (loss / grad_accum).backward()
 
@@ -205,10 +186,24 @@ def main(
     # Close the SummaryWriter
     writer.close()
 
-    # 8) Save adapter
-    print(f"Saving LoRA adapter -> {save_adapter_path}")
+    # Normalize save paths: always use <base>.pt and <base>.config
+    lora_dir = os.path.join(adapters_dir, save_adapter_path)
+    os.makedirs(lora_dir, exist_ok=True)  # ensure directory exists
+    adapter_path = os.path.join(lora_dir, "adapter.pt")
+    config_path = os.path.join(lora_dir, "config.json")
+
+    print(f"Saving LoRA adapter -> {adapter_path}")
     if hasattr(lora_model, "save_adapter"):
-        lora_model.save_adapter(save_adapter_path)
+        lora_model.save_adapter(adapter_path)
+        cfg_dict = {
+            "r": cfg.r,
+            "lora_alpha": cfg.lora_alpha,
+            "lora_dropout": cfg.lora_dropout,
+            "target_modules": cfg.target_modules,
+            "exclude_modules": cfg.exclude_modules,
+        }
+        torch.save(cfg_dict, config_path)
+        print(f"Saved LoRA config -> {config_path}")
     else:
         # generic save: collect lora_A/B by module name
         blob = {}
@@ -216,7 +211,16 @@ def main(
             if hasattr(m, "lora_A") and hasattr(m, "lora_B"):
                 blob[f"{name}.A"] = m.lora_A.detach().cpu()
                 blob[f"{name}.B"] = m.lora_B.detach().cpu()
-        torch.save({"state": blob}, save_adapter_path)
+        torch.save({"state": blob}, adapter_path)
+        cfg_dict = {
+            "r": cfg.r,
+            "lora_alpha": cfg.lora_alpha,
+            "lora_dropout": cfg.lora_dropout,
+            "target_modules": cfg.target_modules,
+            "exclude_modules": cfg.exclude_modules,
+        }
+        torch.save(cfg_dict, config_path)
+        print(f"Saved LoRA config -> {config_path}")
     print("Done.")
 
 

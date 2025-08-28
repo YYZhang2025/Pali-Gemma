@@ -3,7 +3,7 @@ set -euo pipefail
 
 # ---- Config ----
 MODEL_PATH="./models_weight"
-PROMPT="Question: What the image about?"
+PROMPT="Question: What the image about? "
 IMAGE_FILE_PATH="./cat.png"
 MAX_TOKENS_TO_GENERATE=50
 TEMPERATURE=0.8

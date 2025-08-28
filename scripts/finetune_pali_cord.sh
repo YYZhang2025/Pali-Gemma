@@ -22,10 +22,10 @@ LORA_DROPOUT=0.05
 # ---- Training ----
 LR=1e-4
 EPOCHS=1
-GRAD_ACCUM=1
+GRAD_ACCUM=2
 ONLY_CPU="False"
 
-python pali_gemma_ft.py \
+python finetune.py \
     --model_path "$MODEL_PATH" \
     --prompt "$PROMPT" \
     --lora_r $LORA_R \

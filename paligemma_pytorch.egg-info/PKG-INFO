@@ -3,6 +3,8 @@ Name: paligemma-pytorch
 Version: 0.1.0
 Requires-Python: ==3.10.*
 Requires-Dist: fire==0.6.0
+Requires-Dist: gradio>=5.42.0
+Requires-Dist: matplotlib>=3.10.5
 Requires-Dist: numpy==1.26.4
 Requires-Dist: pillow==10.3.0
 Requires-Dist: safetensors==0.4.3
@@ -12,3 +14,6 @@ Requires-Dist: torchaudio==2.3.0
 Requires-Dist: torchvision==0.18.0
 Requires-Dist: tqdm==4.66.4
 Requires-Dist: transformers==4.41.2
+Requires-Dist: huggingface_hub>=0.24.0
+Requires-Dist: tensorboard>=2.20.0
+Requires-Dist: gradio>=5.42.0

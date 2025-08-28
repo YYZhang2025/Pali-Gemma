@@ -1,13 +1,12 @@
-from pali_gemma.config import ModelConfig
-from pali_gemma.model.vision_model import SiglipVisionModel
-from pali_gemma.model.language_model import GemmaForCausalLM
-from pali_gemma.model.kv_cache import KVCache
-
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
 
-from typing import Optional, Tuple
+from pali_gemma.config import ModelConfig
+from pali_gemma.model.kv_cache import KVCache
+from pali_gemma.model.language_model import GemmaForCausalLM
+from pali_gemma.model.vision_model import SiglipVisionModel
 
 
 class PaliGemmaMultiModalProjector(nn.Module):
@@ -45,15 +44,14 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
 
+        # (B, D)
         scaled_image_features = image_features / (self.config.projection_dim**0.5)
 
         # Combine the embeddings of the
         # - image tokens
         # - text tokens
-        # and mask out all the padding tokens
-        final_embeddings = torch.zeros(
-            batch_size, sequence_length, embed_dim, dtype=dtype, device=device
-        )
+        # - mask out all the padding tokens
+        final_embeddings = torch.zeros(batch_size, sequence_length, embed_dim, dtype=dtype, device=device)
 
         # Create 3 mask:
         # 1. Text mask: True for text tokens
@@ -64,6 +62,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         image_mask = input_ids == self.config.image_token_index
         padding_mask = input_ids == self.pad_token_id
 
+        # (B, S) => (B, S, D)
         text_mask = text_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
         image_mask = image_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
         padding_mask = padding_mask.unsqueeze(-1).expand(-1, -1, embed_dim)
@@ -71,9 +70,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         # Apply masks to final embeddings
         final_embeddings = torch.where(text_mask, inputs_embeds, final_embeddings)
         final_embeddings = final_embeddings.masked_scatter(image_mask, scaled_image_features)
-        final_embeddings = torch.where(
-            padding_mask, torch.zeros_like(final_embeddings), final_embeddings
-        )
+        final_embeddings = torch.where(padding_mask, torch.zeros_like(final_embeddings), final_embeddings)
 
         # Create mask for the attention
         q_len = inputs_embeds.shape[1]
@@ -81,18 +78,14 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         if kv_cache is None or kv_cache.num_items() == 0:
             # Do not mask any token, because we're in the prefill phase
             # This only works when we have no padding
-            causal_mask = torch.full(
-                (batch_size, q_len, q_len), fill_value=0, dtype=dtype, device=device
-            )
+            causal_mask = torch.full((batch_size, q_len, q_len), fill_value=0, dtype=dtype, device=device)
         else:
             # Since we are generating tokens, the query must be one single token
             assert q_len == 1
             kv_len = kv_cache.num_items() + q_len
             # Also in this case we don't need to mask anything, since each query should be able to attend all previous tokens.
             # This only works when we have no padding
-            causal_mask = torch.full(
-                (batch_size, q_len, kv_len), fill_value=0, dtype=dtype, device=device
-            )
+            causal_mask = torch.full((batch_size, q_len, kv_len), fill_value=0, dtype=dtype, device=device)
 
         # Add the head dimension
         # [Batch_Size, Q_Len, KV_Len] -> [Batch_Size, Num_Heads_Q, Q_Len, KV_Len]
@@ -106,9 +99,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         else:
             # Create a position_ids based on the size of the attention_mask
             # For masked tokens, use the number 1 as position.
-            position_ids = (
-                (attention_mask.cumsum(-1)).masked_fill_((attention_mask == 0), 1).to(device)
-            )
+            position_ids = (attention_mask.cumsum(-1)).masked_fill_((attention_mask == 0), 1).to(device)
 
         return final_embeddings, causal_mask, position_ids
 
@@ -119,7 +110,7 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         attention_mask: torch.Tensor,
         kv_cache: Optional[KVCache] = None,
     ) -> Tuple:
-        assert torch.all(attention_mask == 1), "The input cannot be padded"
+        # assert torch.all(attention_mask == 1), "The input cannot be padded"
 
         # Get Text embedding
         inputs_embeds = self.language_model.get_input_embeddings()(input_ids)

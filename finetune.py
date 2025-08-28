@@ -1,24 +1,25 @@
 from __future__ import annotations
 
+import json
 import os
-from typing import Any, Dict, List, Optional
+import random
+from functools import partial
+from typing import Any, List, Optional
 
 import fire
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
+from datasets import load_dataset
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
-from datasets import load_dataset
 
 from pali_gemma.data.paligemma_preprocess import PaliGemmaProcessor
 from pali_gemma.data.utils import move_inputs_to_device
 from pali_gemma.fine_tune.lora import LoraConfig, get_lora_model
 from pali_gemma.load_weight import load_hf_model
 from pali_gemma.utils import get_device
-import json
-import random
 
 
 # =====================
@@ -96,8 +97,6 @@ class CORDDataset(torch.utils.data.Dataset):
 # =====================
 # Training loop
 # =====================
-
-
 def train_step(
     model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int]
 ) -> torch.Tensor:
@@ -131,46 +130,24 @@ def train_step(
 # =====================
 # DataLoader helpers (CORD)
 # =====================
-def make_train_collate(processor: PaliGemmaProcessor, prompt_text: str):
-    def _fn(batch):
-        images = [b[0] for b in batch]
-        # teacher-forcing: concatenate prompt and target JSON
-        texts = [prompt_text + tgt for (_, tgt) in batch]
-        inputs = processor(
-            text=texts,
-            images=images,
-            return_tensors="pt",
-            padding=True,
-            tokenize_newline_separately=False,
-        )
-        return {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
-            "pixel_values": inputs["pixel_values"],
-        }
+def collate_fn(
+    batch,
+    prompt_text: str,
+    processor: PaliGemmaProcessor,
+):
+    images = [b[0] for b in batch]
+    # teacher-forcing: concatenate prompt and target JSON
+    texts = [prompt_text + tgt for (_, tgt) in batch]
+    inputs = processor(
+        text=texts,
+        images=images,
+    )
 
-    return _fn
-
-
-def make_eval_collate(processor: PaliGemmaProcessor, prompt_text: str):
-    # Same as train, but keeps the raw target for optional inspection
-    def _fn(batch):
-        images = [b[0] for b in batch]
-        texts = [prompt_text + tgt for (_, tgt) in batch]
-        inputs = processor(
-            text=texts,
-            images=images,
-            return_tensors="pt",
-            padding=True,
-            tokenize_newline_separately=False,
-        )
-        return {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs["attention_mask"],
-            "pixel_values": inputs["pixel_values"],
-        }
-
-    return _fn
+    return {
+        "input_ids": inputs["input_ids"],
+        "attention_mask": inputs["attention_mask"],
+        "pixel_values": inputs["pixel_values"],
+    }
 
 
 # =====================
@@ -179,7 +156,7 @@ def make_eval_collate(processor: PaliGemmaProcessor, prompt_text: str):
 def main(
     model_path: str,
     prompt: str,
-    image_file_path: str,
+    image_file_path: str = "",
     answer: str = "",
     # LoRA
     lora_r: int = 64,
@@ -246,27 +223,20 @@ def main(
     except Exception:
         image_token_id = None
 
-    pad_token_id = getattr(tokenizer, "pad_token_id", None)
-    if pad_token_id is None:
-        # some tokenizers use eos as pad; fallback
-        pad_token_id = getattr(tokenizer, "eos_token_id", -100)
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
     # 6) Build datasets & dataloaders (CORD image->JSON)
     print("Loading CORD dataset...")
     train_dataset = CORDDataset(dataset_name_or_path, split=train_split, sort_json_key=True)
     val_dataset = CORDDataset(dataset_name_or_path, split=val_split, sort_json_key=True)
-
-    train_collate = make_train_collate(processor, prompt)
-    eval_collate = make_eval_collate(processor, prompt)
-
-    from torch.utils.data import DataLoader
+    partial_collate = partial(collate_fn, prompt_text=prompt, processor=processor)
 
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        collate_fn=train_collate,
+        collate_fn=partial_collate,
         pin_memory=True,
     )
     val_loader = DataLoader(
@@ -274,7 +244,7 @@ def main(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        collate_fn=eval_collate,
+        collate_fn=partial_collate,
         pin_memory=True,
     )
 
@@ -288,7 +258,8 @@ def main(
         for step, batch in enumerate(pbar, start=1):
             batch = move_inputs_to_device(batch, device)
             loss = train_step(lora_model, batch, pad_token_id, image_token_id)
-            (loss / grad_accum).backward()
+            loss = loss / grad_accum
+            loss.backward()
 
             if step % grad_accum == 0:
                 optimizer.step()

@@ -3,13 +3,13 @@
 MODEL_PATH="./models_weight"
 PROMPT="Question: What the image about?"
 IMAGE_FILE_PATH="./cat.png"
-ANSWER="It is a cute cat doing the programming"
+ANSWER="It is a cute cat doing the programming <eos>"
 LORA_R=4
 LORA_ALPHA=16
 LORA_DROPOUT=0.1
 LR=1e-4
 EPOCHS=1
-STEPS=200
+STEPS=20
 SAVE_ADAPTER_PATH="./naive_lora"
 ONLY_CPU="False"
 
