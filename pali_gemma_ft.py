@@ -11,11 +11,10 @@ from PIL import Image
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
 
-from pali_gemma.data.paligemma_preprocess import PaliGemmaProcessor
-from pali_gemma.data.utils import move_inputs_to_device
+from pali_gemma.data_process.paligemma_preprocess import PaliGemmaProcessor
 from pali_gemma.fine_tune.lora import LoraConfig, get_lora_model
 from pali_gemma.load_weight import load_hf_model
-from pali_gemma.utils import get_device
+from pali_gemma.utils import get_device, move_inputs_to_device
 
 
 # =====================
@@ -33,6 +32,7 @@ def build_labels(
     labels = input_ids.clone()
     # mask pads
     labels[attention_mask == 0] = -100
+
     # mask image tokens if we can identify them
     if image_token_id is not None and image_token_id >= 0:
         labels[labels == image_token_id] = -100
@@ -42,8 +42,6 @@ def build_labels(
 # =====================
 # Single-sample dataset builder
 # =====================
-
-
 def build_single_sample(
     processor: PaliGemmaProcessor, prompt: str, answer: str, image_path: str, device: torch.device
 ) -> dict:
@@ -56,8 +54,6 @@ def build_single_sample(
 # =====================
 # Training loop
 # =====================
-
-
 def train_step(
     model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int]
 ) -> torch.Tensor:
@@ -85,6 +81,7 @@ def train_step(
         shift_labels.view(-1),
         ignore_index=-100,
     )
+
     return loss
 
 
@@ -97,7 +94,7 @@ def main(
     image_file_path: str,
     answer: str = "",
     # LoRA
-    lora_r: int = 64,
+    lora_r: int = 16,
     lora_alpha: float = 16.0,
     lora_dropout: float = 0.05,
     # Train
@@ -171,7 +168,8 @@ def main(
         running = 0.0
         for step in tqdm(range(steps), desc=f"Epoch {epoch + 1}/{epochs}"):
             loss = train_step(lora_model, batch, pad_token_id, image_token_id)
-            (loss / grad_accum).backward()
+            loss = loss / grad_accum
+            loss.backward()
 
             if (step + 1) % grad_accum == 0:
                 optimizer.step()

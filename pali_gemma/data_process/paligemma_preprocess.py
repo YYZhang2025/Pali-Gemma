@@ -1,11 +1,12 @@
 from typing import List
 
 import numpy as np
+import torch
 from PIL import Image
 from transformers import PreTrainedTokenizerBase
 
-from pali_gemma.data.image_preprocess import process_images
-from pali_gemma.utils import numpy_to_torch
+from pali_gemma.data_process.image_preprocess import process_images
+from pali_gemma.utils import move_inputs_to_device, numpy_to_torch
 
 
 def add_image_tokens_to_prompt(prefix_prompt, bos_token, image_seq_len, image_token):
@@ -19,22 +20,16 @@ class PaliGemmaProcessor:
         self.image_seq_length = num_image_tokens
         self.image_size = image_size
 
-        tokens_to_add = {"additional_special_tokens": [self.IMAGE_TOKEN]}
-
-        # tokenizer.add_special_tokens(tokens_to_add)
-        # Add the image token as a special token without tripping strict type checkers
-        tokenizer.add_tokens([self.IMAGE_TOKEN], special_tokens=True)
-
-        EXTRA_TOKENS = [f"<loc{i:04d}>" for i in range(1024)]  # For Object Detection (Bounding Boxes)
+        EXTRA_TOKENS = [self.IMAGE_TOKEN]
+        EXTRA_TOKENS += [f"<loc{i:04d}>" for i in range(1024)]  # For Object Detection (Bounding Boxes)
         EXTRA_TOKENS += [f"<seg{i:03d}>" for i in range(128)]  # For Object Segmentation
 
-        tokenizer.add_tokens(EXTRA_TOKENS)
+        tokenizer.add_tokens(EXTRA_TOKENS, special_tokens=True)
 
         self.image_token_ids = tokenizer.convert_tokens_to_ids(self.IMAGE_TOKEN)
 
         tokenizer.add_bos_token = False
-        tokenizer.add_eos_token = False
-
+        tokenizer.add_eos_token = True
         self.tokenizer = tokenizer
 
     def __call__(
@@ -42,11 +37,8 @@ class PaliGemmaProcessor:
         text: List[str],
         images: List[Image.Image],
         padding: str = "longest",
-        truncation: bool = True,
+        truncation: bool = False,
     ):
-        # TODO: Extend to take several images
-        # assert len(images) == 1 and len(text) == 1, f"Received {len(images)} images for {len(text)} prompts."
-
         pixel_values = process_images(
             images,
             size=(self.image_size, self.image_size),
@@ -73,8 +65,22 @@ class PaliGemmaProcessor:
             padding=padding,
             return_tensors="pt",
             add_special_tokens=False,
+            truncation=truncation,
         )
 
-        return_data = {"pixel_values": pixel_values, **inputs}
+        return {
+            "pixel_values": pixel_values,
+            "input_ids": inputs["input_ids"],
+            "attention_mask": inputs["attention_mask"],
+        }
 
-        return return_data
+
+def get_model_inputs(processor, prompt: str, image_file_path: str, device: torch.device):
+    image = Image.open(image_file_path)
+    image = image.convert("RGB")  # Ensure the image is in RGB format
+    images = [image]
+    prompts = [prompt]
+    model_inputs = processor(text=prompts, images=images)
+    model_inputs = move_inputs_to_device(model_inputs, device)
+
+    return model_inputs

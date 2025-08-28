@@ -2,6 +2,7 @@ import os
 
 import numpy as np
 import torch
+from rich import print
 
 from pali_gemma.fine_tune.lora import LoraConfig
 
@@ -48,3 +49,14 @@ def load_lora_config_from_file_or_args(adapter_path: str) -> LoraConfig:
         target_modules=tuple(saved_cfg["target_modules"]),
         exclude_modules=tuple(saved_cfg["exclude_modules"]),
     )
+
+
+def move_inputs_to_device(model_inputs: dict, device: torch.device) -> dict:
+    # model_inputs = {k: v.to(device) for k, v in model_inputs.items()}
+    model_inputs = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in model_inputs.items()}
+
+    return model_inputs
+
+
+def print_color(text: str, color: str = "red"):
+    print(f"[{color}]{text}[/{color}]")

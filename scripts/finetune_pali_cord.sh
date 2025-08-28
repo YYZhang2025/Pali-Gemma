@@ -11,7 +11,7 @@ PROMPT="extract JSON. "
 DATASET_NAME_OR_PATH="naver-clova-ix/cord-v2"
 TRAIN_SPLIT="train"
 VAL_SPLIT="validation"   # change to "test" if your build has no validation split
-BATCH_SIZE=4
+BATCH_SIZE=1
 NUM_WORKERS=2
 
 # ---- LoRA ----
@@ -22,10 +22,10 @@ LORA_DROPOUT=0.05
 # ---- Training ----
 LR=1e-4
 EPOCHS=1
-GRAD_ACCUM=2
+GRAD_ACCUM=8
 ONLY_CPU="False"
 
-python finetune.py \
+python finetune_cord.py \
     --model_path "$MODEL_PATH" \
     --prompt "$PROMPT" \
     --lora_r $LORA_R \

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -49,9 +48,7 @@ class ModelConfig:
             self.lm_head_dim = self.lm_hidden_size // self.lm_num_attention_heads
 
         # Ensure that the number of image tokens is a perfect square
-        assert (
-            self.vision_num_image_tokens**0.5
-        ).is_integer(), "Number of image tokens must be a perfect square"
-        assert (
-            self.projection_dim == self.lm_hidden_size
-        ), "Projection dimension must match LM hidden size"
+        assert (self.vision_num_image_tokens**0.5).is_integer(), (
+            "Number of image tokens must be a perfect square"
+        )
+        assert self.projection_dim == self.lm_hidden_size, "Projection dimension must match LM hidden size"

@@ -68,8 +68,7 @@ def load_hf_model(
     model_path: str = "models_weight",
     device: torch.device = torch.device("cpu"),
 ) -> Tuple[PaliGemmaForConditionalGeneration, AutoTokenizer]:
-    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="right")
-    assert tokenizer.padding_side == "right"
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side="left")
 
     ## LOAD Model Weight
     # Find all the *.safetensors files

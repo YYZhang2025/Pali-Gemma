@@ -4,19 +4,18 @@ import fire
 import torch
 import torch.nn as nn
 
-from pali_gemma.data.paligemma_preprocess import PaliGemmaProcessor
-from pali_gemma.data.utils import get_model_inputs
-from pali_gemma.fine_tune.lora import LoraConfig, get_lora_model
+from pali_gemma.data_process.paligemma_preprocess import PaliGemmaProcessor, get_model_inputs
+from pali_gemma.fine_tune.lora import get_lora_model
 from pali_gemma.inference.sampling import get_sampler
 from pali_gemma.load_weight import load_hf_model
 from pali_gemma.model.kv_cache import KVCache
-from pali_gemma.utils import get_device, load_lora_config_from_file_or_args
+from pali_gemma.utils import get_device, load_lora_config_from_file_or_args, print_color
 
 # CONST VARIABLE
 LORA_BASE_DIR = "./lora_adapters"
 
 
-def test_inference(
+def inference(
     model: nn.Module,
     processor: PaliGemmaProcessor,
     device: torch.device,
@@ -39,8 +38,6 @@ def test_inference(
     generated_tokens = []
 
     for _ in range(max_tokens_to_generate):
-        # Get the model outputs
-        # TODO: remove the labels
         outputs = model(
             input_ids=input_ids,
             pixel_values=pixel_values,
@@ -64,10 +61,13 @@ def test_inference(
         attention_mask = torch.cat([attention_mask, torch.ones((1, 1), device=input_ids.device)], dim=-1)
 
     generated_tokens = torch.cat(generated_tokens, dim=-1)
+
     # Decode the generated tokens
     decoded = processor.tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
-    print(prompt + decoded)
+    # print(prompt)
+    print_color(prompt)
+    print_color(decoded, "green")
 
 
 def main(
@@ -113,7 +113,7 @@ def main(
 
     print("Running inference")
     with torch.no_grad():
-        test_inference(
+        inference(
             model,
             processor,
             device,
