@@ -46,7 +46,7 @@ def build_single_sample(
     processor: PaliGemmaProcessor, prompt: str, answer: str, image_path: str, device: torch.device
 ) -> dict:
     image = Image.open(image_path).convert("RGB")
-    model_inputs = processor(text=[prompt + answer], images=[image])
+    model_inputs = processor(prefix_prompt=[prompt], suffix_prompt=[answer], images=[image])
     # Using concatenated prompt+answer as targets; you can switch to special formatting if needed.
     return move_inputs_to_device(model_inputs, device)
 

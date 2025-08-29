@@ -3,8 +3,8 @@ set -euo pipefail
 
 # ---- Config ----
 MODEL_PATH="./models_weight"
-PROMPT="Question: What the image about?"
-IMAGE_FILE_PATH="./cat.png"
+PROMPT="Extract JSON"
+IMAGE_FILE_PATH="./receipt.png"
 MAX_TOKENS_TO_GENERATE=50
 TEMPERATURE=0.8
 TOP_P=0.9
@@ -13,8 +13,8 @@ ONLY_CPU="False"     # "True" or "False"
 
 # ---- LoRA (optional) ----
 USE_LORA="True"                 # "True" to enable
-LORA_NAME="naive_lora"   # name of the adapter saved with save_adapter(...)
-LORA_MERGE="True"               # "True" to merge into base weights
+LORA_NAME="cord_lora"   # name of the adapter saved with save_adapter(...)
+LORA_MERGE="False"               # "True" to merge into base weights
 
 
 # Run

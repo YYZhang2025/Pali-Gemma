@@ -52,12 +52,14 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         Returns:
             _type_: _description_
         """
-        # (B, D)
-        scaled_image_features = image_features / (self.config.projection_dim**0.5)
 
         _, _, embed_dim = image_features.shape
         batch_size, sequence_length = input_ids.shape
         dtype, device = inputs_embeds.dtype, inputs_embeds.device
+
+        # (B, D)
+        scaled_image_features = image_features / (self.config.projection_dim**0.5)
+        scaled_image_features = scaled_image_features.to(dtype)
 
         # Combine the embeddings of the
         # - image tokens

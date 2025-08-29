@@ -103,7 +103,7 @@ def token2json(tokens, processor, is_inner_value=False, added_vocab=None):
 # =====================
 # Label building (mask image/pad tokens)
 # =====================
-def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Optional[int]) -> torch.Tensor:
+def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Optional[int], prompt_len:int) -> torch.Tensor:
     """
     Prepare next-token prediction labels from `input_ids` by masking out
     padding and image-token positions with -100.
@@ -111,6 +111,10 @@ def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Opt
     We'll shift during loss computation.
     """
     labels = input_ids.clone()
+    
+    # Mask Prompt
+    labels[:, :prompt_len] = -100
+    
     # mask pads
     labels[labels == pad_token_id] = -100
     # mask image tokens if we can identify them
@@ -182,13 +186,13 @@ class CORDDataset(Dataset):
 # Training loop
 # =====================
 def train_step(
-    model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int]
+    model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int], prompt_len
 ) -> torch.Tensor:
     input_ids = batch["input_ids"]  # [B, S]
     attention_mask = batch["attention_mask"]  # [B, S]
     pixel_values = batch["pixel_values"]  # [B, C, H, W]
 
-    labels = build_labels(input_ids, pad_token_id, image_token_id)
+    labels = build_labels(input_ids, pad_token_id, image_token_id, prompt_len=prompt_len)
 
     # Forward
     outputs = model(
@@ -253,6 +257,9 @@ def main(
     processor = PaliGemmaProcessor(tokenizer, num_image_tokens, image_size)
     image_token_id = processor.image_token_ids
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    
+    prompt_ids = tokenizer(prompt, add_special_tokens=False, return_tensors="pt")["input_ids"][0]
+    prompt_len = prompt_ids.numel()
 
     # 3) Wrap with LoRA (PEFT-like)
     cfg = LoraConfig(
@@ -314,13 +321,14 @@ def main(
             with torch.autocast(
                 device_type=device.type, dtype=torch.bfloat16 if device.type == "cuda" else torch.float16
             ):
-                loss = train_step(lora_model, batch, pad_token_id, image_token_id)
+                loss = train_step(lora_model, batch, pad_token_id, image_token_id, prompt_len)
 
             loss = loss / grad_accum
             loss.backward()
 
             batch_loss += loss.item()
             if step % grad_accum == 0:
+                torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1

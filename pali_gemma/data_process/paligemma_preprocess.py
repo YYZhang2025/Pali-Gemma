@@ -29,7 +29,7 @@ class PaliGemmaProcessor:
         self.image_token_ids = tokenizer.convert_tokens_to_ids(self.IMAGE_TOKEN)
 
         tokenizer.add_bos_token = False
-        tokenizer.add_eos_token = True
+        tokenizer.add_eos_token = False 
         self.tokenizer = tokenizer
 
     def __call__(
