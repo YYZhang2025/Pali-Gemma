@@ -145,7 +145,8 @@ class GemmaAttention(nn.Module):
         attn = torch.matmul(q, k.transpose(-2, -1)) / (d_k**0.5)
 
         assert attention_mask is not None
-        attn = attn + attention_mask
+        # attn = attn + attention_mask
+        attn = attn.masked_fill_(~attention_mask, value=float("-inf"))
 
         attn = attn.softmax(dim=-1)
         attn = F.dropout(attn, p=self.config.lm_attention_dropout, training=self.training)

@@ -103,7 +103,13 @@ def token2json(tokens, processor, is_inner_value=False, added_vocab=None):
 # =====================
 # Label building (mask image/pad tokens)
 # =====================
-def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Optional[int], prompt_len:int) -> torch.Tensor:
+def build_labels(
+    input_ids: torch.Tensor,
+    pad_token_id: int,
+    image_token_id: Optional[int],
+    bos_token_id: int = 2,
+    newline_token_id: int = 108,
+) -> torch.Tensor:
     """
     Prepare next-token prediction labels from `input_ids` by masking out
     padding and image-token positions with -100.
@@ -111,10 +117,28 @@ def build_labels(input_ids: torch.Tensor, pad_token_id: int, image_token_id: Opt
     We'll shift during loss computation.
     """
     labels = input_ids.clone()
-    
-    # Mask Prompt
-    labels[:, :prompt_len] = -100
-    
+
+    B, L = input_ids.shape
+    for b in range(B):
+        seq = input_ids[b]
+
+        # find BOS
+        bos_idx = (seq == bos_token_id).nonzero(as_tuple=True)[0]
+        if len(bos_idx) == 0:
+            prompt_end = 0
+        else:
+            bos_idx = bos_idx[0].item()
+
+            # find first newline *after* BOS
+            after_bos = seq[bos_idx + 1 :]
+            nl_idx = (after_bos == newline_token_id).nonzero(as_tuple=True)[0]
+            if len(nl_idx) > 0:
+                prompt_end = bos_idx + 1 + nl_idx[0].item() + 1  # include newline
+            else:
+                prompt_end = bos_idx + 1
+
+        labels[b, :prompt_end] = -100  # mask the prompt tokens
+
     # mask pads
     labels[labels == pad_token_id] = -100
     # mask image tokens if we can identify them
@@ -186,13 +210,13 @@ class CORDDataset(Dataset):
 # Training loop
 # =====================
 def train_step(
-    model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int], prompt_len
+    model: nn.Module, batch: dict, pad_token_id: int, image_token_id: Optional[int], tokenizer, step
 ) -> torch.Tensor:
     input_ids = batch["input_ids"]  # [B, S]
     attention_mask = batch["attention_mask"]  # [B, S]
     pixel_values = batch["pixel_values"]  # [B, C, H, W]
 
-    labels = build_labels(input_ids, pad_token_id, image_token_id, prompt_len=prompt_len)
+    labels = build_labels(input_ids, pad_token_id, image_token_id)
 
     # Forward
     outputs = model(
@@ -203,7 +227,6 @@ def train_step(
     )
     logits = outputs["logits"]  # [B, S, V]
 
-    # Shift for next-token prediction
     shift_logits = logits[:, :-1, :].contiguous()
     shift_labels = labels[:, 1:].contiguous()
 
@@ -257,11 +280,11 @@ def main(
     processor = PaliGemmaProcessor(tokenizer, num_image_tokens, image_size)
     image_token_id = processor.image_token_ids
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
-    
+
     prompt_ids = tokenizer(prompt, add_special_tokens=False, return_tensors="pt")["input_ids"][0]
     prompt_len = prompt_ids.numel()
 
-    # 3) Wrap with LoRA (PEFT-like)
+    # 3) Wrap with LoRA
     cfg = LoraConfig(
         r=lora_r,
         lora_alpha=lora_alpha,
@@ -278,11 +301,11 @@ def main(
 
     # 4) Optimizer (only LoRA params)
     if hasattr(lora_model, "lora_parameters"):
-        params = lora_model.lora_parameters()
+        trainable_params = list(lora_model.lora_parameters())
     else:
-        # fallback: parameters that contain lora_A/B
-        params = (p for n, p in lora_model.named_parameters() if ("lora_A" in n or "lora_B" in n))
-    optimizer = torch.optim.AdamW(params, lr=lr)
+        trainable_params = [p for n, p in lora_model.named_parameters() if ("lora_A" in n or "lora_B" in n)]
+
+    optimizer = torch.optim.AdamW(trainable_params, lr=lr)
 
     # 6) Build datasets & dataloaders (CORD image->JSON)
     print_color("Loading CORD dataset...", "yellow")
@@ -321,14 +344,15 @@ def main(
             with torch.autocast(
                 device_type=device.type, dtype=torch.bfloat16 if device.type == "cuda" else torch.float16
             ):
-                loss = train_step(lora_model, batch, pad_token_id, image_token_id, prompt_len)
+                loss = train_step(lora_model, batch, pad_token_id, image_token_id, tokenizer, global_step)
 
             loss = loss / grad_accum
             loss.backward()
 
             batch_loss += loss.item()
             if step % grad_accum == 0:
-                torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
+                # torch.nn.utils.clip_grad_norm_(params, max_norm=1.0)
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=1.0)  # ✅
                 optimizer.step()
                 optimizer.zero_grad()
                 global_step += 1
@@ -344,7 +368,7 @@ def main(
             val_steps = 0
             for vb in val_loader:
                 vb = move_inputs_to_device(vb, device)
-                vloss = train_step(lora_model, vb, pad_token_id, image_token_id)
+                vloss = train_step(lora_model, vb, pad_token_id, image_token_id, tokenizer, global_step)
                 val_running += vloss.item()
                 val_steps += 1
             if val_steps > 0:

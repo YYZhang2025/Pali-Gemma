@@ -100,14 +100,19 @@ class PaliGemmaForConditionalGeneration(nn.Module):
 
             # allow[i, q, k] = causal_lower[q, k] & key_keep[i, k]
             allow = causal_lower.unsqueeze(0) & key_keep.unsqueeze(1)  # [B, Q, Q]
-            causal_mask = allow   # [B, Q, Q]
+            causal_mask = allow  # [B, Q, Q]
         else:
             # Decode: single query can attend to all cached keys + itself (no future exists)
             assert q_len == 1
             kv_len = kv_cache.num_items() + q_len
 
             # If your cache never stores pads, you can allow all keys:
-            causal_mask = torch.zeros((batch_size, q_len, kv_len), dtype=dtype, device=device)
+            # causal_mask = torch.zeros((batch_size, q_len, kv_len), dtype=dtype, device=device)
+            causal_mask = torch.ones(
+                (batch_size, q_len, kv_len),  # <-- bool mask, all allowed
+                dtype=torch.bool,
+                device=device,
+            )
 
         # Add head dim: [B, 1, Q, K]
         causal_mask = causal_mask.unsqueeze(1)
@@ -121,6 +126,9 @@ class PaliGemmaForConditionalGeneration(nn.Module):
             # Create a position_ids based on the size of the attention_mask
             # For masked tokens, use the number 1 as position.
             position_ids = (attention_mask.cumsum(-1)).masked_fill_((attention_mask == 0), 1).to(device)
+
+        # print(causal_mask)
+        # print(position_ids)
 
         return final_embeddings, causal_mask, position_ids
 
