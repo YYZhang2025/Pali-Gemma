@@ -32,9 +32,7 @@ class SiglipVisionEmbeddings(nn.Module):
         )
 
     def forward(self, imgs: torch.Tensor) -> torch.Tensor:
-        # (B, C, H, W) -> (B, C', H', W')
         patch_embeds = self.patch_embedding(imgs)
-        # (B, C', H', W') -> (B, H' * W', C')
         patch_embeds = patch_embeds.flatten(2).transpose(1, 2)
 
         position_embeds = self.position_embedding(self.position_ids)

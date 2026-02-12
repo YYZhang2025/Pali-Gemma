@@ -8,7 +8,6 @@ from pali_gemma.config import ModelConfig
 from pali_gemma.model.kv_cache import KVCache, repeat_kv
 
 
-# TODO: Confirm the behavior of (1.0 + self.weight) and self.weight
 class GemmaRMSNorm(nn.Module):
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
@@ -264,7 +263,7 @@ class GemmaForCausalLM(nn.Module):
         position_ids: torch.Tensor,
         inputs_embeds: torch.Tensor,
         kv_cache: KVCache,
-    ) -> Dict[str, Union[torch.Tensor, KVCache]]:
+    ) -> Dict[str, torch.Tensor | KVCache]:
         # input_embeds: [Batch_Size, Seq_Len, Hidden_Size]
         # outputs: [Batch_Size, Seq_Len, Hidden_Size]
         outputs = self.model(
