@@ -198,15 +198,16 @@ class PaliGemmaForConditionalGeneration(nn.Module):
             first_idx = torch.argmax(is_seq.to(torch.int64), dim=-1)  # (B,)
             prefix_len = first_idx + 1  # (B,)
 
-            mask = torch.zeros((input_ids.shape[0], 1, q_len, q_len), dtype=torch.bool, device=device)
-            idx = torch.arange(q_len, device=device)
-            causal = idx[None, :] <= idx[:, None]  # (S, S)
+            # indices
+            i = torch.arange(q_len, device=device)[None, :, None]  # (1, S, 1)
+            j = torch.arange(q_len, device=device)[None, None, :]  # (1, 1, S)
+            p = prefix_len[:, None, None]  # (B, 1, 1)
 
-            for b in range(input_ids.shape[0]):
-                p = int(prefix_len[b].item())
-                mask[b, 0, :p, :p] = True
-                mask[b, 0, p:, :p] = True
-                mask[b, 0, p:, p:] = causal[p:, p:]
+            # broadcasted mask: (B, S, S)
+            mask_2d = (j < p) | ((i >= p) & (j >= p) & (j <= i))
+
+            # final: (B, 1, S, S)
+            mask = mask_2d[:, None, :, :]
 
         else:  # DECODE STAGE
             # In decode stage, allow all tokens to attend to all cached tokens + itself
@@ -246,11 +247,6 @@ class PaliGemmaForConditionalGeneration(nn.Module):
         # Get Image Embedding
         selected_image_feature = self.vision_tower(pixel_values.to(inputs_embeds.dtype))
         image_features = self.multi_modal_projector(selected_image_feature)
-
-        # # Concat together
-        # inputs_embeds, attention_mask, position_ids = self._merge_input_ids_with_image_features(
-        #     image_features, inputs_embeds, input_ids, attention_mask, kv_cache
-        # )
 
         # Concat image embeddings and text embeddings
         inputs_embeds = self._concat_image_text_embeddings(image_features, inputs_embeds, input_ids)
